@@ -1,6 +1,6 @@
 const express = require("express");
 const { ObjectId } = require("mongodb");
-const { verifyToken } = require("../middleware/verifyToken");
+const { verifyToken, requireAdmin } = require("../middleware/verifyToken");
 const router = express.Router();
 
 let db;
@@ -43,9 +43,46 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET: ID দিয়ে একটি Product আনা
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    const product = await getProductsCollection().findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: product,
+    });
+  } catch (error) {
+    console.error("Get product error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch product",
+    });
+  }
+});
+
 
 // POST: নতুন Product তৈরি
-router.post("/", async (req, res) => {
+router.post("/", verifyToken, requireAdmin, async (req, res) => {
   try {
     const {
       name,
@@ -90,7 +127,7 @@ router.post("/", async (req, res) => {
 
 
 // PATCH: Product Update
-router.patch("/:id", async (req, res) => {
+router.patch("/:id",verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -155,7 +192,7 @@ router.patch("/:id", async (req, res) => {
 
 
 // DELETE: Product Delete
-router.delete("/:id", async (req, res) => {
+router.delete("/:id",verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
