@@ -55,28 +55,6 @@ router.post("/", async (req, res) => {
       stock = 0,
     } = req.body;
 
-    if (
-      typeof name !== "string" ||
-      !name.trim() ||
-      typeof description !== "string" ||
-      !description.trim() ||
-      typeof category !== "string" ||
-      !category.trim() ||
-      typeof price !== "number" ||
-      !Number.isFinite(price) ||
-      price < 0 ||
-      typeof stock !== "number" ||
-      !Number.isInteger(stock) ||
-      stock < 0 ||
-      !Array.isArray(images) ||
-      !images.every((image) => typeof image === "string")
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid product data",
-      });
-    }
-
     const product = {
       name: name.trim(),
       description: description.trim(),
@@ -96,7 +74,6 @@ router.post("/", async (req, res) => {
       message: "Product created successfully",
       data: {
         ...product,
-        _id: result.insertedId,
       },
     });
   } catch (error) {
@@ -105,6 +82,102 @@ router.post("/", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to create product",
+    });
+  }
+});
+
+
+// PATCH: Product Update
+router.patch("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const allowedFields = [
+      "name",
+      "description",
+      "price",
+      "category",
+      "brand",
+      "images",
+      "stock",
+    ];
+
+    const updates = {};
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid fields provided for update",
+      });
+    }
+
+    for (const field of ["name", "description", "category", "brand"]) {
+      if (field in updates) {
+        updates[field] = updates[field].trim();
+      }
+    }
+
+    updates.updatedAt = new Date();
+
+    const result = await getProductsCollection().updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updates },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Product updated successfully",
+    });
+  } catch (error) {
+    console.error("Update product error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update product",
+    });
+  }
+});
+
+
+// DELETE: Product Delete
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await getProductsCollection().deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Product deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete product error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete product",
     });
   }
 });
