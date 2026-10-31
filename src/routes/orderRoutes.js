@@ -13,6 +13,11 @@ const VALID_STATUSES = [
   "Delivered",
   "Cancelled",
 ];
+const VALID_PAYMENT_STATUSES = ["Pending", "Paid", "Failed", "Refunded"];
+const COUPONS = {
+  NSTU10: { percentage: 0.1 },
+  SAVE50: { amount: 50 },
+};
 
 function setDB(database) {
   db = database;
@@ -46,7 +51,13 @@ function buildOrderItem(product, quantity) {
 
 router.post("/", verifyToken, async (req, res) => {
   try {
-    const { items, shippingFee = 0, paymentMethod = "Cash on Delivery", deliveryAddress } = req.body;
+    const {
+      items,
+      shippingFee = 0,
+      paymentMethod = "Cash on Delivery",
+      deliveryAddress,
+      couponCode = "",
+    } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
@@ -96,16 +107,43 @@ router.post("/", verifyToken, async (req, res) => {
       subtotal += Number(product.price) * quantity;
     }
 
-    const total = subtotal + Number(shippingFee);
+    const normalizedShippingFee = Number(shippingFee);
+
+    if (!Number.isFinite(normalizedShippingFee) || normalizedShippingFee < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Shipping fee must be a non-negative number",
+      });
+    }
+
+    const normalizedCouponCode = typeof couponCode === "string"
+      ? couponCode.trim().toUpperCase()
+      : "";
+    const coupon = normalizedCouponCode ? COUPONS[normalizedCouponCode] : null;
+
+    if (normalizedCouponCode && !coupon) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid coupon code",
+      });
+    }
+
+    const discount = coupon?.percentage
+      ? Math.round(subtotal * coupon.percentage)
+      : Math.min(coupon?.amount || 0, subtotal);
+    const total = subtotal - discount + normalizedShippingFee;
 
     const order = {
       userId: req.user.id,
       userEmail: req.user.email || "",
       status: "Pending",
+      paymentStatus: "Pending",
       paymentMethod,
       deliveryAddress: deliveryAddress || "",
-      shippingFee: Number(shippingFee) || 0,
+      couponCode: normalizedCouponCode,
+      shippingFee: normalizedShippingFee,
       subtotal,
+      discount,
       total,
       items: validatedItems.map(({ product, quantity }) => buildOrderItem(product, quantity)),
       createdAt: new Date(),
@@ -273,6 +311,51 @@ router.patch("/:id/status", verifyToken, requireAdmin, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to update order status",
+    });
+  }
+});
+
+router.patch("/:id/payment-status", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { paymentStatus } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order ID",
+      });
+    }
+
+    if (!VALID_PAYMENT_STATUSES.includes(paymentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment status must be one of: Pending, Paid, Failed, Refunded",
+      });
+    }
+
+    const result = await getOrdersCollection().updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { paymentStatus, updatedAt: new Date() } },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Payment status updated successfully",
+    });
+  } catch (error) {
+    console.error("Update payment status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update payment status",
     });
   }
 });

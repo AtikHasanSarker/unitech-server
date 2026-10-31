@@ -37,6 +37,7 @@ router.get("/", async (req, res) => {
   try {
     const search = sanitizeSearchText(req.query.search);
     const category = sanitizeSearchText(req.query.category);
+    const status = sanitizeSearchText(req.query.status);
     const minPrice = parsePositiveNumber(req.query.minPrice, null);
     const maxPrice = parsePositiveNumber(req.query.maxPrice, null);
     const page = Math.max(1, parsePositiveNumber(req.query.page, 1));
@@ -56,6 +57,10 @@ router.get("/", async (req, res) => {
 
     if (category) {
       filter.category = { $regex: `^${escapeRegex(category)}$`, $options: "i" };
+    }
+
+    if (status) {
+      filter.status = status;
     }
 
     if (minPrice !== null && !Number.isNaN(minPrice) && minPrice >= 0) {
@@ -154,10 +159,13 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       name,
       description,
       price,
+      oldPrice,
       category,
       brand,
+      sku = "",
       images = [],
       stock = 0,
+      status = "Active",
     } = req.body;
 
     if (typeof name !== "string" || !name.trim()) {
@@ -175,6 +183,17 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       });
     }
 
+    let numericOldPrice;
+    if (oldPrice !== undefined && oldPrice !== null && oldPrice !== "") {
+      numericOldPrice = Number(oldPrice);
+      if (!Number.isFinite(numericOldPrice) || numericOldPrice <= numericPrice) {
+        return res.status(400).json({
+          success: false,
+          message: "Old price must be greater than the current price",
+        });
+      }
+    }
+
     const numericStock = Number(stock);
     if (!Number.isInteger(numericStock) || numericStock < 0) {
       return res.status(400).json({
@@ -183,14 +202,37 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       });
     }
 
+    if (!["Active", "Draft"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Product status must be Active or Draft",
+      });
+    }
+
+    const normalizedSku = typeof sku === "string" ? sku.trim() : "";
+    if (normalizedSku) {
+      const duplicateSku = await getProductsCollection().findOne({
+        sku: { $regex: `^${escapeRegex(normalizedSku)}$`, $options: "i" },
+      });
+      if (duplicateSku) {
+        return res.status(409).json({
+          success: false,
+          message: "A product with this SKU already exists",
+        });
+      }
+    }
+
     const product = {
       name: name.trim(),
       description: typeof description === "string" ? description.trim() : "",
       price: numericPrice,
+      ...(numericOldPrice === undefined ? {} : { oldPrice: numericOldPrice }),
       category: typeof category === "string" ? category.trim() : "",
       brand: typeof brand === "string" ? brand.trim() : "",
+      sku: normalizedSku,
       images: Array.isArray(images) ? images : [],
       stock: numericStock,
+      status,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -227,10 +269,13 @@ router.patch("/:id", verifyToken, requireAdmin, async (req, res) => {
       "name",
       "description",
       "price",
+      "oldPrice",
       "category",
       "brand",
+      "sku",
       "images",
       "stock",
+      "status",
     ];
 
     const updates = {};
@@ -273,12 +318,52 @@ router.patch("/:id", verifyToken, requireAdmin, async (req, res) => {
       updates.price = numericPrice;
     }
 
+    if (updates.oldPrice !== undefined) {
+      if (updates.oldPrice === null || updates.oldPrice === "") {
+        updates.oldPrice = null;
+      } else {
+        const numericOldPrice = Number(updates.oldPrice);
+        const currentProduct = await getProductsCollection().findOne({ _id: new ObjectId(id) });
+        const currentPrice = updates.price ?? currentProduct?.price;
+        if (!Number.isFinite(numericOldPrice) || numericOldPrice <= currentPrice) {
+          return res.status(400).json({
+            success: false,
+            message: "Old price must be greater than the current price",
+          });
+        }
+        updates.oldPrice = numericOldPrice;
+      }
+    }
+
     if (updates.category !== undefined) {
       updates.category = typeof updates.category === "string" ? updates.category.trim() : "";
     }
 
     if (updates.brand !== undefined) {
       updates.brand = typeof updates.brand === "string" ? updates.brand.trim() : "";
+    }
+
+    if (updates.sku !== undefined) {
+      updates.sku = typeof updates.sku === "string" ? updates.sku.trim() : "";
+      if (updates.sku) {
+        const duplicateSku = await getProductsCollection().findOne({
+          _id: { $ne: new ObjectId(id) },
+          sku: { $regex: `^${escapeRegex(updates.sku)}$`, $options: "i" },
+        });
+        if (duplicateSku) {
+          return res.status(409).json({
+            success: false,
+            message: "A product with this SKU already exists",
+          });
+        }
+      }
+    }
+
+    if (updates.status !== undefined && !["Active", "Draft"].includes(updates.status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Product status must be Active or Draft",
+      });
     }
 
     if (updates.stock !== undefined) {

@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const IMG_API_URL = "https://api.imgbb.com/1/upload";
-const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 
 router.post("/", async (req, res) => {
   try {
