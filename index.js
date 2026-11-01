@@ -58,10 +58,7 @@ async function startServer() {
     if (!process.env.MONGODB_URI) {
       throw new Error("MONGODB_URI is missing from .env");
     }
-
     await client.connect();
-    await client.db("admin").command({ ping: 1 });
-
     console.log("MongoDB connected successfully!");
 
     const db = client.db("unitech");

@@ -37,7 +37,6 @@ router.get("/", async (req, res) => {
   try {
     const search = sanitizeSearchText(req.query.search);
     const category = sanitizeSearchText(req.query.category);
-    const status = sanitizeSearchText(req.query.status);
     const minPrice = parsePositiveNumber(req.query.minPrice, null);
     const maxPrice = parsePositiveNumber(req.query.maxPrice, null);
     const page = Math.max(1, parsePositiveNumber(req.query.page, 1));
@@ -57,10 +56,6 @@ router.get("/", async (req, res) => {
 
     if (category) {
       filter.category = { $regex: `^${escapeRegex(category)}$`, $options: "i" };
-    }
-
-    if (status) {
-      filter.status = status;
     }
 
     if (minPrice !== null && !Number.isNaN(minPrice) && minPrice >= 0) {
@@ -153,106 +148,232 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+
 router.post("/", verifyToken, requireAdmin, async (req, res) => {
   try {
     const {
       name,
-      description,
-      price,
-      oldPrice,
+      sku,
       category,
-      brand,
-      sku = "",
+      brand = "",
+      description = "",
+      price,
+      costPrice = 0,
+      discountPrice = null,
+      stock,
+      lowStockThreshold = 2,
+      features = [],
+      specifications = [],
+      warranty = "",
       images = [],
-      stock = 0,
       status = "Active",
     } = req.body;
 
+    // 1. Required field validation
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Product name is required",
+        message: "Product name is required.",
       });
     }
 
+    if (typeof sku !== "string" || !sku.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Product SKU is required.",
+      });
+    }
+
+    if (typeof category !== "string" || !category.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Product category is required.",
+      });
+    }
+
+    // 2. Numeric validation
     const numericPrice = Number(price);
+    const numericCostPrice = Number(costPrice);
+    const numericStock = Number(stock);
+    const numericLowStockThreshold = Number(lowStockThreshold);
+
     if (!Number.isFinite(numericPrice) || numericPrice < 0) {
       return res.status(400).json({
         success: false,
-        message: "Product price must be a valid number",
+        message: "Invalid selling price.",
       });
     }
 
-    let numericOldPrice;
-    if (oldPrice !== undefined && oldPrice !== null && oldPrice !== "") {
-      numericOldPrice = Number(oldPrice);
-      if (!Number.isFinite(numericOldPrice) || numericOldPrice <= numericPrice) {
-        return res.status(400).json({
-          success: false,
-          message: "Old price must be greater than the current price",
-        });
-      }
+    if (!Number.isFinite(numericCostPrice) || numericCostPrice < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid purchase price.",
+      });
     }
 
-    const numericStock = Number(stock);
     if (!Number.isInteger(numericStock) || numericStock < 0) {
       return res.status(400).json({
         success: false,
-        message: "Product stock must be a non-negative integer",
+        message: "Stock must be a non-negative integer.",
       });
     }
 
-    if (!["Active", "Draft"].includes(status)) {
+    if (
+      !Number.isInteger(numericLowStockThreshold) ||
+      numericLowStockThreshold < 0
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Product status must be Active or Draft",
+        message: "Invalid low stock threshold.",
       });
     }
 
-    const normalizedSku = typeof sku === "string" ? sku.trim() : "";
-    if (normalizedSku) {
-      const duplicateSku = await getProductsCollection().findOne({
-        sku: { $regex: `^${escapeRegex(normalizedSku)}$`, $options: "i" },
-      });
-      if (duplicateSku) {
-        return res.status(409).json({
+    // 3. Discount price validation
+    let numericDiscountPrice = null;
+
+    if (discountPrice !== null && discountPrice !== "") {
+      numericDiscountPrice = Number(discountPrice);
+
+      if (
+        !Number.isFinite(numericDiscountPrice) ||
+        numericDiscountPrice < 0 ||
+        numericDiscountPrice > numericPrice
+      ) {
+        return res.status(400).json({
           success: false,
-          message: "A product with this SKU already exists",
+          message:
+            "Discount price must be valid and cannot exceed selling price.",
         });
       }
     }
 
+    // 4. Status validation
+    if (!["Active", "Draft"].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product status.",
+      });
+    }
+
+    // 5. Features validation
+    if (
+      !Array.isArray(features) ||
+      !features.every((item) => typeof item === "string")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Features must be an array of strings.",
+      });
+    }
+
+    // 6. Specifications validation
+    if (
+      !Array.isArray(specifications) ||
+      !specifications.every(
+        (item) =>
+          item &&
+          typeof item.key === "string" &&
+          typeof item.value === "string",
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product specifications.",
+      });
+    }
+
+    // 7. Image validation
+    if (
+      !Array.isArray(images) ||
+      !images.every(
+        (image) => typeof image === "string" && /^https?:\/\/\S+$/i.test(image),
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Product images must be valid image URLs.",
+      });
+    }
+
+    // 8. SKU duplicate validation
+    const normalizedSku = sku.trim();
+
+    const escapedSku = normalizedSku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const duplicateSku = await getProductsCollection().findOne({
+      sku: {
+        $regex: `^${escapedSku}$`,
+        $options: "i",
+      },
+    });
+
+    if (duplicateSku) {
+      return res.status(409).json({
+        success: false,
+        message: "A product with this SKU already exists.",
+      });
+    }
+
+    // 9. Create product
     const product = {
       name: name.trim(),
-      description: typeof description === "string" ? description.trim() : "",
-      price: numericPrice,
-      ...(numericOldPrice === undefined ? {} : { oldPrice: numericOldPrice }),
-      category: typeof category === "string" ? category.trim() : "",
-      brand: typeof brand === "string" ? brand.trim() : "",
       sku: normalizedSku,
-      images: Array.isArray(images) ? images : [],
+      category: category.trim(),
+      brand: typeof brand === "string" ? brand.trim() : "",
+      description: typeof description === "string" ? description.trim() : "",
+
+      // Pricing
+      price: numericPrice,
+      costPrice: numericCostPrice,
+      discountPrice: numericDiscountPrice,
+
+      // Inventory
       stock: numericStock,
+      lowStockThreshold: numericLowStockThreshold,
+
+      // Product details
+      features: features.map((item) => item.trim()).filter(Boolean),
+
+      specifications: specifications
+        .map((item) => ({
+          key: item.key.trim(),
+          value: item.value.trim(),
+        }))
+        .filter((item) => item.key && item.value),
+
+      warranty: typeof warranty === "string" ? warranty.trim() : "",
+
+      // Images
+      images,
+
+      // Frontend does not currently send status
       status,
+
       createdAt: new Date(),
       updatedAt: new Date(),
     };
 
+    // 10. Save to MongoDB
     const result = await getProductsCollection().insertOne(product);
 
     return res.status(201).json({
       success: true,
-      message: "Product created successfully",
-      data: { ...product, _id: result.insertedId },
+      message: "Product created successfully.",
+      data: {
+        ...product,
+        _id: result.insertedId,
+      },
     });
   } catch (error) {
     console.error("Create product error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to create product",
+      message: "Failed to create product.",
     });
   }
 });
+
 
 router.patch("/:id", verifyToken, requireAdmin, async (req, res) => {
   try {
