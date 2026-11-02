@@ -41,44 +41,85 @@ app.get("/", (req, res) => {
   });
 });
 
-app.use("/api/products", productRoutes);
-app.use("/api/categories", categoryRoutes);
-app.use("/api/cart", cartRoutes);
-app.use("/api/wishlist", wishlistRoutes);
-app.use("/api/orders", orderRoutes);
-app.use("/api/upload", uploadRoutes);
-app.use("/api/admin", adminRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api", siteRoutes);
+let database;
+let connectionPromise;
 
-const client = new MongoClient(process.env.MONGODB_URI);
+async function connectToDatabase() {
+  if (database) {
+    return database;
+  }
+
+  if (!process.env.MONGODB_URI) {
+    throw new Error("MONGODB_URI is missing from .env");
+  }
+
+  if (!connectionPromise) {
+    const client = new MongoClient(process.env.MONGODB_URI);
+
+    connectionPromise = Promise.resolve()
+      .then(() => client.connect())
+      .then((connectedClient) => {
+        database = connectedClient.db("unitech");
+        setProductDB(database);
+        setCategoryDB(database);
+        setCartDB(database);
+        setWishlistDB(database);
+        setOrderDB(database);
+        setAdminDB(database);
+        setUserDB(database);
+        setSiteDB(database);
+        console.log("MongoDB connected successfully!");
+
+        return database;
+      })
+      .catch(async (error) => {
+        connectionPromise = null;
+        await client.close().catch(() => {});
+        throw error;
+      });
+  }
+
+  return connectionPromise;
+}
+
+async function ensureDatabase(req, res, next) {
+  try {
+    await connectToDatabase();
+    return next();
+  } catch (error) {
+    console.error("MongoDB connection failed:", error.message);
+    return res.status(503).json({
+      success: false,
+      message: "Database connection unavailable",
+    });
+  }
+}
+
+app.use("/api/products", ensureDatabase, productRoutes);
+app.use("/api/categories", ensureDatabase, categoryRoutes);
+app.use("/api/cart", ensureDatabase, cartRoutes);
+app.use("/api/wishlist", ensureDatabase, wishlistRoutes);
+app.use("/api/orders", ensureDatabase, orderRoutes);
+app.use("/api/upload", uploadRoutes);
+app.use("/api/admin", ensureDatabase, adminRoutes);
+app.use("/api/users", ensureDatabase, userRoutes);
+app.use("/api", ensureDatabase, siteRoutes);
 
 async function startServer() {
   try {
-    if (!process.env.MONGODB_URI) {
-      throw new Error("MONGODB_URI is missing from .env");
-    }
-    await client.connect();
-    console.log("MongoDB connected successfully!");
-
-    const db = client.db("unitech");
-    setProductDB(db);
-    setCategoryDB(db);
-    setCartDB(db);
-    setWishlistDB(db);
-    setOrderDB(db);
-    setAdminDB(db);
-    setUserDB(db);
-    setSiteDB(db);
+    await connectToDatabase();
 
     app.listen(PORT, () => {
       console.log(`UniTech server running on port ${PORT}`);
     });
   } catch (error) {
     console.error("Server startup failed:", error.message);
-    await client.close().catch(() => {});
     process.exit(1);
   }
 }
 
-startServer();
+module.exports = app;
+
+if (require.main === module) {
+  startServer();
+}

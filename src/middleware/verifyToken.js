@@ -1,5 +1,3 @@
-const { createRemoteJWKSet, jwtVerify } = require("jose");
-
 const authIssuer = process.env.AUTH_ISSUER;
 const authAudience = process.env.AUTH_AUDIENCE;
 const clientURL = process.env.CLIENT_URL;
@@ -10,7 +8,26 @@ if (!authIssuer || !authAudience || !clientURL) {
   );
 }
 
-const JWKS = createRemoteJWKSet(new URL("/api/auth/jwks", clientURL));
+let josePromise;
+let jwksPromise;
+
+function loadJose() {
+  if (!josePromise) {
+    josePromise = import("jose");
+  }
+
+  return josePromise;
+}
+
+function loadJWKS() {
+  if (!jwksPromise) {
+    jwksPromise = loadJose().then(({ createRemoteJWKSet }) =>
+      createRemoteJWKSet(new URL("/api/auth/jwks", clientURL)),
+    );
+  }
+
+  return jwksPromise;
+}
 
 // Verify JWT
 async function verifyToken(req, res, next) {
@@ -33,6 +50,7 @@ async function verifyToken(req, res, next) {
       });
     }
 
+    const [{ jwtVerify }, JWKS] = await Promise.all([loadJose(), loadJWKS()]);
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: authIssuer,
       audience: authAudience,

@@ -33,6 +33,96 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function normalizeCategoryTokens(value) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((token) => {
+      if (token.endsWith("ies") && token.length > 4) {
+        return `${token.slice(0, -3)}y`;
+      }
+      return token.endsWith("s") && !token.endsWith("ss")
+        ? token.slice(0, -1)
+        : token;
+    });
+}
+
+function hasEquivalentCategoryTokens(left, right) {
+  const leftTokens = normalizeCategoryTokens(left);
+  const rightTokens = normalizeCategoryTokens(right);
+
+  if (!leftTokens.length || !rightTokens.length) {
+    return false;
+  }
+
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  const sameTokens =
+    leftSet.size === rightSet.size &&
+    [...leftSet].every((token) => rightSet.has(token));
+
+  return sameTokens || leftTokens.join("") === rightTokens.join("");
+}
+
+function isLegacyCategorySubset(productCategory, categoryLabel) {
+  const productTokens = normalizeCategoryTokens(productCategory);
+  const categoryTokens = normalizeCategoryTokens(categoryLabel);
+
+  return (
+    productTokens.length > 0 &&
+    productTokens.length < categoryTokens.length &&
+    productTokens.every((token) => categoryTokens.includes(token))
+  );
+}
+
+async function resolveProductCategoryValues(categoryValue) {
+  const categoryCollection = db.collection("categories");
+  const categories = await categoryCollection.find({}).toArray();
+  const normalizedValue = categoryValue.trim().toLowerCase();
+  const selectedCategory = categories.find(
+    (item) => String(item._id) === categoryValue,
+  ) || categories.find(
+    (item) =>
+      String(item.name ?? "").trim().toLowerCase() === normalizedValue ||
+      String(item.slug ?? "").trim().toLowerCase() === normalizedValue,
+  );
+  const categoryLabels = selectedCategory
+    ? [selectedCategory.name, selectedCategory.slug].filter(Boolean)
+    : [categoryValue];
+  const productCategoryValues = await getProductsCollection().distinct(
+    "category",
+    { category: { $type: "string" } },
+  );
+
+  return productCategoryValues.filter((productCategory) => {
+    if (
+      categoryLabels.some((label) =>
+        hasEquivalentCategoryTokens(productCategory, label),
+      )
+    ) {
+      return true;
+    }
+
+    if (!selectedCategory) {
+      return false;
+    }
+
+    const matchingCategories = categories.filter((item) =>
+      [item.name, item.slug].some((label) =>
+        isLegacyCategorySubset(productCategory, label),
+      ),
+    );
+
+    return (
+      matchingCategories.length === 1 &&
+      String(matchingCategories[0]._id) === String(selectedCategory._id)
+    );
+  });
+}
+
 router.get("/", async (req, res) => {
   try {
     const search = sanitizeSearchText(req.query.search);
@@ -55,7 +145,9 @@ router.get("/", async (req, res) => {
     }
 
     if (category) {
-      filter.category = { $regex: `^${escapeRegex(category)}$`, $options: "i" };
+      filter.category = {
+        $in: await resolveProductCategoryValues(category),
+      };
     }
 
     if (minPrice !== null && !Number.isNaN(minPrice) && minPrice >= 0) {
