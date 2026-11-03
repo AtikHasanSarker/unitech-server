@@ -337,6 +337,53 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
+  /api/cart/merge:
+    post:
+      tags: [Cart]
+      summary: Merge a browser guest cart into the authenticated user's cart
+      operationId: mergeGuestCart
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              additionalProperties: false
+              properties:
+                items:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [productId, quantity]
+                    additionalProperties: false
+                    properties:
+                      productId: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+                      quantity: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: The final authenticated cart after server-side validation and stock-limited merging.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  skippedCount: { type: integer, minimum: 0 }
+                  cappedCount: { type: integer, minimum: 0 }
+                  data: { $ref: '#/components/schemas/CartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /api/wishlist:
     get:
       tags: [Wishlist]

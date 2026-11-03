@@ -59,7 +59,13 @@ async function connectToDatabase() {
     connectionPromise = Promise.resolve()
       .then(() => client.connect())
       .then((connectedClient) => {
-        database = connectedClient.db("unitech");
+        const connectedDatabase = connectedClient.db("unitech");
+        return connectedDatabase.collection("carts")
+          .createIndex({ userId: 1 }, { unique: true })
+          .then(() => connectedDatabase);
+      })
+      .then((connectedDatabase) => {
+        database = connectedDatabase;
         setProductDB(database);
         setCategoryDB(database);
         setCartDB(database);
