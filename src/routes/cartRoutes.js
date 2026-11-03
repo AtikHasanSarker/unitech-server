@@ -1,6 +1,5 @@
 const express = require("express");
 const { ObjectId } = require("mongodb");
-const { verifyToken } = require("../middleware/verifyToken");
 
 const router = express.Router();
 let db;
@@ -34,7 +33,7 @@ function normalizeQuantity(value) {
   return quantity;
 }
 
-router.get("/", verifyToken, async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     let cart = await getCartCollection().findOne({ userId: req.user.id });
 
@@ -61,7 +60,7 @@ router.get("/", verifyToken, async (req, res) => {
   }
 });
 
-router.post("/", verifyToken, async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { productId, quantity = 1 } = req.body;
     const normalizedQty = normalizeQuantity(quantity);
@@ -160,7 +159,7 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
-router.patch("/:productId", verifyToken, async (req, res) => {
+router.patch("/:productId", async (req, res) => {
   try {
     const { productId } = req.params;
     const { quantity } = req.body;
@@ -237,7 +236,7 @@ router.patch("/:productId", verifyToken, async (req, res) => {
   }
 });
 
-router.delete("/:productId", verifyToken, async (req, res) => {
+router.delete("/:productId", async (req, res) => {
   try {
     const { productId } = req.params;
 
@@ -287,7 +286,7 @@ router.delete("/:productId", verifyToken, async (req, res) => {
   }
 });
 
-router.delete("/", verifyToken, async (req, res) => {
+router.delete("/", async (req, res) => {
   try {
     await getCartCollection().deleteOne({ userId: req.user.id });
 
